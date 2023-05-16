@@ -7,13 +7,28 @@
 // Connect to LCD via I2C, default address 0x27 (A0-A2 not jumpered)
 LiquidCrystal_I2C lcd = LiquidCrystal_I2C(0x27, 16, 2); // Change to (0x27,20,4) for 20x4 LCD.
 
+const int buttonPin = 3;
+const int ledPin = LED_BUILTIN;
 int displayNum = 42;
+
+void displayInterrupt() {
+  int buttonState = digitalRead(buttonPin);
+  digitalWrite(LED_BUILTIN, !buttonState);
+
+  if (buttonState == 0) {
+    displayNum = 0;
+  }
+}
 
 void setup() {
   // Initialize the LCD
   lcd.init();
   lcd.backlight();
   Serial.begin(9600);
+
+  pinMode(LED_BUILTIN, OUTPUT);
+  pinMode(buttonPin, INPUT_PULLUP);
+  attachInterrupt(digitalPinToInterrupt(buttonPin), displayInterrupt, CHANGE);
 }
 
 // Displays number as binary on the character lcd
