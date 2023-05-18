@@ -1,59 +1,48 @@
-// Include the libraries:
-// LiquidCrystal_I2C.h: https://github.com/johnrickman/LiquidCrystal_I2C
-#include <Wire.h> // Library for I2C communication
-#include <LiquidCrystal_I2C.h> // Library for LCD
+#include <Arduino.h>
 
-// Wiring: SDA pin is connected to A4 and SCL pin to A5.
-// Connect to LCD via I2C, default address 0x27 (A0-A2 not jumpered)
-LiquidCrystal_I2C lcd = LiquidCrystal_I2C(0x27, 16, 2); // Change to (0x27,20,4) for 20x4 LCD.
-
-const int buttonPin = 3;
-const int ledPin = LED_BUILTIN;
-int displayNum = 42;
-
-void displayInterrupt() {
-  int buttonState = digitalRead(buttonPin);
-  digitalWrite(LED_BUILTIN, !buttonState);
-
-  if (buttonState == 0) {
-    displayNum = 0;
-  }
-}
+const int CLOCK_PIN = 5;
+const int DATA_PIN = 4;
+const int LATCH_PIN = 6;
 
 void setup() {
-  // Initialize the LCD
-  lcd.init();
-  lcd.backlight();
   Serial.begin(9600);
+	pinMode(DATA_PIN, INPUT);
+  pinMode(CLOCK_PIN, OUTPUT);
+  pinMode(LATCH_PIN, OUTPUT);
 
-  pinMode(LED_BUILTIN, OUTPUT);
-  pinMode(buttonPin, INPUT_PULLUP);
-  attachInterrupt(digitalPinToInterrupt(buttonPin), displayInterrupt, CHANGE);
-}
-
-// Displays number as binary on the character lcd
-void DisplayNumAsBin(int num) {
-  char binStr[16] = "0000000000000000";
-  for (int i = 0; i < 16; i++) {
-    if (BitOn(num, i)) {
-      binStr[abs(i - 15)] = '1';
-    }
-  }
-  lcd.print(binStr);
-  Serial.println(binStr);
-} 
-
-// Returns true if a given bit is on in a number
-bool BitOn(int num, int bit) {
-  uint16_t num_from_bit = 1 << bit;
-  if ((num ^ num_from_bit) < num) {
-      return true;
-  }
-  return false;
+  digitalWrite(LATCH_PIN, 1);
+  digitalWrite(CLOCK_PIN, 0);
 }
 
 void loop() {
-  lcd.setCursor(0, 0);
-  DisplayNumAsBin(displayNum);
+  
+  // Latch data
+  digitalWrite(LATCH_PIN, 0);
+  delayMicroseconds(20);
+  digitalWrite(LATCH_PIN, 1);
+  delayMicroseconds(20);
+  
+  // Read data
+  uint16_t shift_num = shiftIn165(DATA_PIN, CLOCK_PIN, MSBFIRST, 16);
+  Serial.println(shift_num);
+
   delay(100);
+}
+
+uint16_t shiftIn165(uint8_t dataPin, uint8_t clockPin, uint8_t bitOrder, int bits) {
+  uint16_t value = 0;
+
+  for (uint16_t i = 0; i < bits; i++) {
+    delayMicroseconds(20);
+    digitalWrite(clockPin, LOW);
+    if (bitOrder == LSBFIRST) {
+      value |= digitalRead(dataPin) << i;
+    }
+    else {
+      value |= digitalRead(dataPin) << ((bits - 1) - i);
+    }
+    delayMicroseconds(20);
+    digitalWrite(clockPin, HIGH);
+  }
+  return value;
 }
