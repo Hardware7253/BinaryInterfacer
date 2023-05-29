@@ -1,90 +1,69 @@
 #include <Arduino.h>
 
-// Include the libraries:
-// LiquidCrystal_I2C.h: https://github.com/johnrickman/LiquidCrystal_I2C
-#include <Wire.h> // Library for I2C communication
-#include <LiquidCrystal_I2C.h> // Library for LCD
+// Keyapd number    00, 01, 02, 03, 04, 05, 06, 7, 8, 9
+int keypadPins[] = {A0, A1, A2, A3, 3, 2, 10, 9, 8, 7};
+uint16_t keypadNum = 0;
 
-// Wiring: SDA pin is connected to A4 and SCL pin to A5.
-// Connect to LCD via I2C, default address 0x27 (A0-A2 not jumpered)
-LiquidCrystal_I2C lcd = LiquidCrystal_I2C(0x27, 16, 2); // Change to (0x27,20,4) for 20x4 LCD.
+unsigned long lastButtonTime = 0; // Time of last button press
+unsigned long buttonTime = 0; // time of most recent button press
 
-const int CLOCK_PIN = 5;
-const int DATA_PIN = 4;
-const int LATCH_PIN = 6;
+// Initialise an array of pins, as input or output
+void InitPinArray(int pinsArray[], int len, byte io) {
+  for (int i = 0; i < len; i++) {
+    pinMode(pinsArray[i], io);
+  }
+}
 
 void setup() {
-  // Initialize the LCD
+  
   Serial.begin(9600);
 
-  lcd.init();
-  lcd.backlight();
-
-  pinMode(DATA_PIN, INPUT);
-  pinMode(CLOCK_PIN, OUTPUT);
-  pinMode(LATCH_PIN, OUTPUT);
-
-  digitalWrite(LATCH_PIN, 1);
-  digitalWrite(CLOCK_PIN, 0);
-  
+  InitPinArray(keypadPins, 10, INPUT_PULLUP);
 }
 
-// Displays number as binary on the character lcd
-void DisplayNumAsBin(int num) {
-  char binStr[16] = "0000000000000000";
-  for (int i = 0; i < 16; i++) {
-    if (BitOn(num, i)) {
-      binStr[abs(i - 15)] = '1';
+// Return value of the key being pressed
+// So the keypad key 4 will return 4
+// Return -1 if more than 1 key is being pressed
+int ReadKeypad(int pins[]) {
+
+  int num = -1;
+  for (int i = 0; i < 10; i++) {
+    if (digitalRead(pins[i]) == LOW) {
+      if (num == -1) {
+        num = i;
+      } else {
+        return -1;
+      }
     }
   }
-  lcd.print(binStr);
-} 
 
-// Returns true if a given bit is on in a number
-bool BitOn(int num, int bit) {
-  uint16_t num_from_bit = 1 << bit;
-  if ((num ^ num_from_bit) < num) {
-      return true;
-  }
-  return false;
+  return num;
 }
 
-uint16_t shiftIn165(uint8_t dataPin, uint8_t clockPin, uint8_t latchPin, uint8_t bitOrder, int bits) {
-  
-  // Latch data
-  digitalWrite(latchPin, 0);
-  delayMicroseconds(20);
-  digitalWrite(latchPin, 1);
-  delayMicroseconds(20);
-  
-  uint16_t value = 0;
+// Updates number based off keypad inputs
+uint16_t KeypadInputNum(int keypadPins[], uint16_t num) {
+  int key = ReadKeypad(keypadPins);
 
-  for (uint16_t i = 0; i < bits; i++) {
-    delayMicroseconds(20);
-    digitalWrite(clockPin, LOW);
-    if (bitOrder == LSBFIRST) {
-      value |= digitalRead(dataPin) << i;
+  // Only update num if a key has been pressed (-1 represents no keys)
+  if (key != -1) {
+    lastButtonTime = buttonTime;
+    buttonTime = millis();
+
+    // Only register the keypress if the last key was pressed greater than buttonDelayMs ago
+    // buttonDelayMs must be greater than any delays in the for loop
+    int buttonDelayMs = 10;
+
+    if ((buttonTime - lastButtonTime) > buttonDelayMs) {
+      num *= 10;
+      num += key;
     }
-    else {
-      value |= digitalRead(dataPin) << ((bits - 1) - i);
-    }
-    delayMicroseconds(20);
-    digitalWrite(clockPin, HIGH);
   }
-  return value;
+  return num;
 }
+
 
 void loop() {
-  
-  // Get number from binary bus
-  uint16_t busNum = shiftIn165(DATA_PIN, CLOCK_PIN, LATCH_PIN, MSBFIRST, 16);
-  Serial.println(busNum);
-
-  // Output bus number on the lcd
-  lcd.setCursor(0, 0);
-  DisplayNumAsBin(busNum); // Print binary number on first line of the character lcd
-  lcd.setCursor(0, 1);
-  lcd.print(busNum); // Print decimal number on the second line of the character lcd
-  lcd.print("                "); // Clear old characters on the second line
-  delay(100);
+  keypadNum = KeypadInputNum(keypadPins, keypadNum);
+  Serial.println(keypadNum);
+  delay(1);
 }
