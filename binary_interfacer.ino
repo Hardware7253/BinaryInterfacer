@@ -7,26 +7,60 @@
 
 // Wiring: SDA pin is connected to A4 and SCL pin to A5.
 // Connect to LCD via I2C, default address 0x27 (A0-A2 not jumpered)
-LiquidCrystal_I2C lcd = LiquidCrystal_I2C(0x27, 16, 2); // Change to (0x27,20,4) for 20x4 LCD.
+LiquidCrystal_I2C lcd = LiquidCrystal_I2C(0x27, 16, 2); // Change to (0x27,20,4) for 20x4 LCD
 
-const int CLOCK_PIN = 5;
-const int DATA_PIN = 4;
-const int LATCH_PIN = 6;
+// Keyapd number            0,  1,  2,  3, 4,  5,  6, 7, 8, 9
+const int KEYPAD_PINS[] = {A0, A1, A2, A3, 3, 12, 10, 9, 8, 7};
+uint32_t keypadNum = 0;
+
+// Shift register pins
+const int SHARED_CLOCK_PIN = 5;
+const int SHARED_LATCH_PIN = 6;
+const int SHARED_DATA_PIN = 4;
+
+// Mode select pin and mode variable
+const int MODE_SELECT_PIN = 2;
+bool readMode = true;
+
+unsigned long lastKeypadTime = 0; // Time of last keypad button press
+unsigned long debounceTime = 100; // Milliseconds between input changes
+
+// Mode button ISR
+// Change mode and reset keypad number
+void modeInterrupt() {
+  readMode = digitalRead(MODE_SELECT_PIN);
+  keypadNum = 0;
+}
+
+// Initialise an array of pins, as input or output
+void InitPinArray(const int pinsArray[], int len, byte io) {
+  for (int i = 0; i < len; i++) {
+    pinMode(pinsArray[i], io);
+  }
+}
+
 
 void setup() {
-  // Initialize the LCD
   Serial.begin(9600);
 
+  // Initialize the LCD
   lcd.init();
   lcd.backlight();
 
-  pinMode(DATA_PIN, INPUT);
-  pinMode(CLOCK_PIN, OUTPUT);
-  pinMode(LATCH_PIN, OUTPUT);
+  // Initialise keypad pins
+  InitPinArray(KEYPAD_PINS, 10, INPUT_PULLUP);
 
-  digitalWrite(LATCH_PIN, 1);
-  digitalWrite(CLOCK_PIN, 0);
+  // Initialise shift in register pins
+  // Don't initialise data pin as it is switched between input and output on the fly
+  pinMode(SHARED_CLOCK_PIN, OUTPUT);
+  pinMode(SHARED_LATCH_PIN, OUTPUT);
   
+  digitalWrite(SHARED_CLOCK_PIN, 0);
+  digitalWrite(SHARED_LATCH_PIN, 1);
+
+  pinMode(MODE_SELECT_PIN, INPUT);
+  attachInterrupt(digitalPinToInterrupt(MODE_SELECT_PIN), modeInterrupt, CHANGE);
+  modeInterrupt(); // Run modeInterrupt at startup to make sure the correct mode is selected
 }
 
 // Displays number as binary on the character lcd
@@ -49,42 +83,143 @@ bool BitOn(int num, int bit) {
   return false;
 }
 
-uint16_t shiftIn165(uint8_t dataPin, uint8_t clockPin, uint8_t latchPin, uint8_t bitOrder, int bits) {
-  
+// Shifts in a binary number from a shift register (e.g. 74HC165)
+uint16_t shiftIn(uint8_t dataPin, uint8_t clockPin, uint8_t latchPin, uint8_t bits, bool msbfirst) {
+  pinMode(dataPin, INPUT);
+
   // Latch data
   digitalWrite(latchPin, 0);
-  delayMicroseconds(20);
+  delayMicroseconds(1);
   digitalWrite(latchPin, 1);
-  delayMicroseconds(20);
+  delayMicroseconds(1);
+
+  // Data hold time
+  delayMicroseconds(1);
   
   uint16_t value = 0;
 
+  // Sequentially shift in a binary number by adding the value of 1 bit at a time
   for (uint16_t i = 0; i < bits; i++) {
-    delayMicroseconds(20);
     digitalWrite(clockPin, LOW);
-    if (bitOrder == LSBFIRST) {
+    if (!msbfirst) {
       value |= digitalRead(dataPin) << i;
     }
     else {
       value |= digitalRead(dataPin) << ((bits - 1) - i);
     }
-    delayMicroseconds(20);
+    delayMicroseconds(1);
     digitalWrite(clockPin, HIGH);
   }
   return value;
 }
 
-void loop() {
-  
-  // Get number from binary bus
-  uint16_t busNum = shiftIn165(DATA_PIN, CLOCK_PIN, LATCH_PIN, MSBFIRST, 16);
-  Serial.println(busNum);
+// Shifts given number into a shift register (e.g. 74HC595)
+void ShiftOut(uint8_t dataPin, uint8_t clockPin, uint8_t latchPin, uint8_t bits, uint16_t num, bool msbfirst) {
+  pinMode(dataPin, OUTPUT);
 
-  // Output bus number on the lcd
+  for (int i = 0; i < bits; i++) {
+      
+    if (!msbfirst) {
+        digitalWrite(dataPin, BitOn(num, i)); 
+    } else {
+        digitalWrite(dataPin, BitOn(num, abs(i - (bits - 1)))); 
+    }
+    
+    delayMicroseconds(1); // Data hold time
+
+    // Pulse clock to shiftin data
+    digitalWrite(clockPin, 1);
+    delayMicroseconds(1);
+    digitalWrite(clockPin, 0);
+    delayMicroseconds(1);
+  }
+
+  delayMicroseconds(1); // Data hold time
+
+    // Pulse latch pin to latch data
+    digitalWrite(latchPin, 1);
+    delayMicroseconds(1);
+    digitalWrite(latchPin, 0);
+    delayMicroseconds(1);
+}
+
+// Returns true if a bit is on in a number
+bool BitOn(uint16_t num, int bit) {
+  uint16_t num_from_bit = 1 << bit;
+  if ((num ^ num_from_bit) < num) {
+      return true;
+  }
+  return false;
+}
+
+// Return value of the key being pressed
+// So the keypad key 4 will return 4
+// Return -1 if more than 1 key is being pressed
+int ReadKeypad(const int pins[]) {
+
+  int num = -1;
+  for (int i = 0; i < 10; i++) {
+    if (digitalRead(pins[i]) == LOW) {
+      if (num == -1) {
+        num = i;
+      } else {
+        return -1;
+      }
+    }
+  }
+
+  return num;
+}
+
+// Updates number based off keypad inputs
+uint32_t KeypadInputNum(const int keypadPins[], uint32_t num) {
+  int key = ReadKeypad(keypadPins);
+
+  // Only update num if a key has been pressed (-1 represents no keys)
+  if (key != -1) {
+    unsigned long buttonTime = millis();
+
+    if ((buttonTime - lastKeypadTime) > debounceTime) {
+      num *= 10;
+      num += key;
+    }
+
+    lastKeypadTime = buttonTime;
+  }
+
+  return num;
+}
+
+void loop() {
+
+  uint32_t displayNum = 0;
+
+  if (readMode) {
+    
+    // When in read mode the displayNum is read from the bus
+    displayNum = shiftIn(SHARED_DATA_PIN, SHARED_CLOCK_PIN, SHARED_LATCH_PIN, 16, true);
+  } else {
+
+   // When in write mode the displayNum is read from the numpad, and outputted as binary on the bus
+    keypadNum = KeypadInputNum(KEYPAD_PINS, keypadNum);
+
+    ShiftOut(SHARED_DATA_PIN, SHARED_CLOCK_PIN, SHARED_LATCH_PIN, 16, keypadNum, true);
+
+    displayNum = keypadNum;
+  }
+
+  // Reset the display and keypad numbers if they are greater than 16 bits
+  if (displayNum > 65535) {
+    displayNum = 0;
+    keypadNum = 0;
+  }
+  
+  // Output displayNum as decimal and binary on the lcd
   lcd.setCursor(0, 0);
-  DisplayNumAsBin(busNum); // Print binary number on first line of the character lcd
+  DisplayNumAsBin(displayNum); // Print binary number on first line of the character lcd
   lcd.setCursor(0, 1);
-  lcd.print(busNum); // Print decimal number on the second line of the character lcd
+  lcd.print(displayNum); // Print decimal number on the second line of the character lcd
   lcd.print("                "); // Clear old characters on the second line
-  delay(100);
+  
+  delay(1);
 }
