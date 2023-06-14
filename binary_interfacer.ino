@@ -22,14 +22,26 @@ const int SHARED_DATA_PIN = 4;
 const int MODE_SELECT_PIN = 2;
 bool readMode = true;
 
+
+// Output enable pin for shift out register
+const int OE_PIN = 11;
+
+int lastKey = -1; // Last key pressed on the keypad
 unsigned long lastKeypadTime = 0; // Time of last keypad button press
-unsigned long debounceTime = 100; // Milliseconds between input changes
+unsigned long lastModeSwitchTime = 0; // Time of last modeswitch button press
+unsigned long debounceTime = 80; // Milliseconds between input changes
 
 // Mode button ISR
 // Change mode and reset keypad number
 void modeInterrupt() {
-  readMode = digitalRead(MODE_SELECT_PIN);
-  keypadNum = 0;
+
+  if ((millis() - lastModeSwitchTime) > 150) {
+    readMode = !readMode;
+    digitalWrite(OE_PIN, readMode);
+    keypadNum = 0;
+  }
+  
+  lastModeSwitchTime = millis();
 }
 
 // Initialise an array of pins, as input or output
@@ -47,6 +59,10 @@ void setup() {
   lcd.init();
   lcd.backlight();
 
+  // Initialise output enable pin
+  pinMode(OE_PIN, OUTPUT);
+  digitalWrite(OE_PIN, readMode);
+
   // Initialise keypad pins
   InitPinArray(KEYPAD_PINS, 10, INPUT_PULLUP);
 
@@ -54,13 +70,11 @@ void setup() {
   // Don't initialise data pin as it is switched between input and output on the fly
   pinMode(SHARED_CLOCK_PIN, OUTPUT);
   pinMode(SHARED_LATCH_PIN, OUTPUT);
-  
   digitalWrite(SHARED_CLOCK_PIN, 0);
   digitalWrite(SHARED_LATCH_PIN, 1);
 
-  pinMode(MODE_SELECT_PIN, INPUT);
-  attachInterrupt(digitalPinToInterrupt(MODE_SELECT_PIN), modeInterrupt, CHANGE);
-  modeInterrupt(); // Run modeInterrupt at startup to make sure the correct mode is selected
+  pinMode(MODE_SELECT_PIN, INPUT_PULLUP);
+  attachInterrupt(digitalPinToInterrupt(MODE_SELECT_PIN), modeInterrupt, FALLING);
 }
 
 // Displays number as binary on the character lcd
@@ -179,13 +193,15 @@ uint32_t KeypadInputNum(const int keypadPins[], uint32_t num) {
   if (key != -1) {
     unsigned long buttonTime = millis();
 
-    if ((buttonTime - lastKeypadTime) > debounceTime) {
+    if (((buttonTime - lastKeypadTime) > debounceTime) || (key != lastKey)) {
       num *= 10;
       num += key;
     }
 
     lastKeypadTime = buttonTime;
   }
+
+  lastKey = key;
 
   return num;
 }
@@ -220,6 +236,19 @@ void loop() {
   lcd.setCursor(0, 1);
   lcd.print(displayNum); // Print decimal number on the second line of the character lcd
   lcd.print("                "); // Clear old characters on the second line
+  lcd.setCursor (15, 1);
+
+  // Display what mode the device is in (read or write mode)
+  if (readMode) {
+    lcd.print("R");
+  } else {
+    lcd.print("W");
+  }
+
+  // Print bus number to serial console
+  Serial.print("Bus number: ");
+  Serial.println(displayNum);
   
-  delay(1);
+  
+  delayMicroseconds(1);
 }
