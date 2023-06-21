@@ -32,16 +32,9 @@ unsigned long lastModeSwitchTime = 0; // Time of last modeswitch button press
 unsigned long debounceTime = 80; // Milliseconds between input changes
 
 // Mode button ISR
-// Change mode and reset keypad number
+// Reset keypad number
 void modeInterrupt() {
-
-  if ((millis() - lastModeSwitchTime) > 150) {
-    readMode = !readMode;
-    digitalWrite(OE_PIN, readMode);
-    keypadNum = 0;
-  }
-  
-  lastModeSwitchTime = millis();
+  keypadNum = 0;
 }
 
 // Initialise an array of pins, as input or output
@@ -209,6 +202,16 @@ uint32_t KeypadInputNum(const int keypadPins[], uint32_t num) {
 void loop() {
 
   uint32_t displayNum = 0;
+
+  // When the mode select switch is pressed, change the mode
+  if (!digitalRead(MODE_SELECT_PIN)) {
+    if ((millis() - lastModeSwitchTime) > debounceTime) {
+      readMode = !readMode;
+      digitalWrite(OE_PIN, readMode);
+    }
+
+    lastModeSwitchTime = millis();
+  }
 
   if (readMode) {
     
