@@ -11,29 +11,25 @@ LiquidCrystal_I2C lcd = LiquidCrystal_I2C(0x27, 16, 2); // Change to (0x27,20,4)
 
 // Keyapd number            0,  1,  2,  3, 4,  5,  6, 7, 8, 9
 const int KEYPAD_PINS[] = {A0, A1, A2, A3, 3, 12, 10, 9, 8, 7};
-uint32_t keypadNum = 0;
+uint32_t keypadNum = 0; // Stores the number entered on the keypad
 
 // Shift register pins
 const int SHARED_CLOCK_PIN = 5;
 const int SHARED_LATCH_PIN = 6;
 const int SHARED_DATA_PIN = 4;
+const int OE_PIN = 11; // Output enable pin for shift out register
 
-// Mode select pin and mode variable
-const int MODE_SELECT_PIN = 2;
-bool readMode = true;
+const int MODE_SELECT_PIN = 2; // Pin for the mode select switch
+bool readMode = true; // Indicates wether the device is in read or write mode
 
-
-// Output enable pin for shift out register
-const int OE_PIN = 11;
-
-int lastKey = -1; // Last key pressed on the keypad
+int lastKey = -1; // Last key pressed on the keypad (-1 represents no keys pressed)
 unsigned long lastKeypadTime = 0; // Time of last keypad button press
 unsigned long lastModeSwitchTime = 0; // Time of last modeswitch button press
 unsigned long debounceTime = 80; // Milliseconds between input changes
 
 // Mode button ISR
 // Reset keypad number
-void modeInterrupt() {
+void ModeInterrupt() {
   keypadNum = 0;
 }
 
@@ -67,7 +63,7 @@ void setup() {
   digitalWrite(SHARED_LATCH_PIN, 1);
 
   pinMode(MODE_SELECT_PIN, INPUT_PULLUP);
-  attachInterrupt(digitalPinToInterrupt(MODE_SELECT_PIN), modeInterrupt, FALLING);
+  attachInterrupt(digitalPinToInterrupt(MODE_SELECT_PIN), ModeInterrupt, FALLING);
 }
 
 // Displays number as binary on the character lcd
@@ -91,7 +87,7 @@ bool BitOn(int num, int bit) {
 }
 
 // Shifts in a binary number from a shift register (e.g. 74HC165)
-uint16_t shiftIn(uint8_t dataPin, uint8_t clockPin, uint8_t latchPin, uint8_t bits, bool msbfirst) {
+uint16_t ShiftIn(uint8_t dataPin, uint8_t clockPin, uint8_t latchPin, uint8_t bits, bool msbfirst) {
   pinMode(dataPin, INPUT);
 
   // Latch data
@@ -134,7 +130,7 @@ void ShiftOut(uint8_t dataPin, uint8_t clockPin, uint8_t latchPin, uint8_t bits,
     
     delayMicroseconds(1); // Data hold time
 
-    // Pulse clock to shiftin data
+    // Pulse clock to ShiftIn data
     digitalWrite(clockPin, 1);
     delayMicroseconds(1);
     digitalWrite(clockPin, 0);
@@ -178,7 +174,8 @@ int ReadKeypad(const int pins[]) {
   return num;
 }
 
-// Updates number based off keypad inputs
+// Returns updated number based off keypad inputs
+// E.g. A starting number of 3 will be returned as 32 if the key 2 is pressed
 uint32_t KeypadInputNum(const int keypadPins[], uint32_t num) {
   int key = ReadKeypad(keypadPins);
 
@@ -210,13 +207,14 @@ void loop() {
       digitalWrite(OE_PIN, readMode);
     }
 
+    // Not accounting for millis() resetting becuase this device does not have a use case where it should be on for multiple months at a time
     lastModeSwitchTime = millis();
   }
 
   if (readMode) {
     
     // When in read mode the displayNum is read from the bus
-    displayNum = shiftIn(SHARED_DATA_PIN, SHARED_CLOCK_PIN, SHARED_LATCH_PIN, 16, true);
+    displayNum = ShiftIn(SHARED_DATA_PIN, SHARED_CLOCK_PIN, SHARED_LATCH_PIN, 16, true);
   } else {
 
    // When in write mode the displayNum is read from the numpad, and outputted as binary on the bus
